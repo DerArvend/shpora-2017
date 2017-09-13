@@ -7,7 +7,7 @@ namespace RobotTask
 {
     public class Robot : IRobot
     {
-        private Dictionary<string, Action<string>> methods;
+        private readonly Dictionary<string, Action<string>> methods;
         private ListStack<string> stack;
         private List<string> outputList;
         private Dictionary<string, int> labelsIndex;
@@ -25,7 +25,7 @@ namespace RobotTask
                 {"POP", Pop},
                 {"READ", Read},
                 {"WRITE", Write},
-                {"SWAR", Swap},
+                {"SWAP", Swap},
                 {"COPY", Copy},
                 {"JMP", Jmp},
                 {"CONCAT", Concat},
