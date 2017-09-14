@@ -1,16 +1,20 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text;
 using System.Text.RegularExpressions;
 
 namespace RobotTask
 {
     public class Robot : IRobot
     {
-        private readonly Dictionary<string, Action<string>> methods;
+        private readonly Dictionary<string, Action<object[]>> methods;
         private ListStack<string> stack;
         private List<string> outputList;
         private Dictionary<string, int> labelsIndex;
+
+        private List<Action<object[]>> parsedCommands;
+        private List<object[]> args;
 
         private int index;
 
@@ -19,7 +23,7 @@ namespace RobotTask
 
         public Robot()
         {
-            methods = new Dictionary<string, Action<string>>
+            methods = new Dictionary<string, Action<object[]>>
             {
                 {"PUSH", Push},
                 {"POP", Pop},
@@ -65,78 +69,117 @@ namespace RobotTask
         {
             stack = new ListStack<string>();
             outputList = new List<string>();
+            parsedCommands = new List<Action<object[]>>();
+            args = new List<object[]>();
             labelsIndex = Enumerable.Range(0, commands.Count)
                 .Where(i => commands[i].StartsWith("LABEL"))
                 .ToDictionary(i => commands[i].Split()[1], i => i);
         }
 
-        private void Run(List<string> commands)
+        private void ParseCommands(List<string> commands)
         {
-            for (index = 0; index < commands.Count; index++)
+            for (int i = 0; i < commands.Count; i++)
             {
-                if (String.IsNullOrEmpty(commands[index])) continue;
+                if (String.IsNullOrEmpty(commands[i]))
+                {
+                    parsedCommands.Add(null);
+                    this.args.Add(null);
+                    continue;
+                }
+                ;
 
-                var splittedCommdand = commands[index].Split(new[] {' '}, 2);
+                var splittedCommdand = commands[i].Split();
                 var command = splittedCommdand[0];
-                var args = (splittedCommdand.Length > 1) ? splittedCommdand[1] : "";
+                var args = splittedCommdand.Skip(1).ToArray();
 
-                if (methods.ContainsKey(command))
-                    methods[command](args);
+                if (command == "LABEL")
+                {
+                    parsedCommands.Add(null);
+                    this.args.Add(null);
+                    continue;
+                }
+
+                parsedCommands.Add(methods[command]);
+                if (command == "SWAP" || command == "COPY")
+                    this.args.Add(args.Select(x => int.Parse(x)).Cast<object>().ToArray());
+                else
+                {
+                    this.args.Add(args.Cast<object>().ToArray());
+                }
             }
         }
 
-        private void Jmp(string args)
+        private void Run(List<string> commands)
         {
-            var mark = string.IsNullOrEmpty(args) ? stack.Pop() : args;
+            ParseCommands(commands);
+            for (index = 0; index < commands.Count; index++)
+            {
+                if (parsedCommands[index] != null)
+                    parsedCommands[index].Invoke(args[index]);
+            }
+        }
+
+        private void Jmp(object[] args)
+        {
+            if (args.Length != 0)
+                Jump((string) args[0]);
+            else
+                Jump(stack.Pop());
+        }
+
+        private void Jump(string mark)
+        {
+            if (string.IsNullOrEmpty(mark))
+                mark = stack.Pop();
             index = labelsIndex[mark];
         }
 
-        private void Push(string args)
+        private void Push(object[] args)
         {
-            stack.Push(Regex.Replace(args, @"\'(.|$)", "$1"));
+            stack.Push(Regex.Replace((string) args[0], @"\'(.|$)", "$1"));
         }
 
-        private void Pop(string args) => stack.Pop();
-        private void Read(string args) => stack.Push(readInput());
-        private void Write(string args) => writeOutput(stack.Peek());
+        private void Pop(object[] args) => stack.Pop();
+        private void Read(object[] args) => stack.Push(readInput());
+        private void Write(object[] args) => writeOutput(stack.Peek());
 
-        private void Swap(string args)
+        private void Swap(object[] args)
         {
-            var indexes = args
-                .Split()
-                .Select(x => stack.Count - int.Parse(x))
-                .ToArray();
+            var firstIndex = stack.Count - (int) args[0];
+            var secondIndex = stack.Count - (int) args[1];
 
-            var temp = stack.GetElement(indexes[0]);
-            stack.SetElement(stack.GetElement(indexes[1]), indexes[0]);
-            stack.SetElement(temp, indexes[1]);
+
+            var temp = stack.GetElement(firstIndex);
+            stack.SetElement(stack.GetElement(secondIndex), firstIndex);
+            stack.SetElement(temp, secondIndex);
         }
 
-        private void Copy(string args)
+
+        private void Copy(object[] args)
         {
             stack.Push(
-                stack.GetElement(stack.Count - int.Parse(args))
+                stack.GetElement(stack.Count - (int) args[0])
             );
         }
 
-        private void Concat(string args)
+        private void Concat(object[] args)
         {
             stack.Push(stack.Pop() + stack.Pop());
         }
 
-        private void Replaceone(string args)
+        private void Replaceone(object[] args)
         {
             var stringToChange = stack.Pop();
             var substringToRemove = stack.Pop();
             var substringToInsert = stack.Pop();
             var mark = stack.Pop();
-
             var i = stringToChange.IndexOf(substringToRemove);
+
 
             if (i == -1)
             {
                 stack.Push(stringToChange);
-                Jmp(mark);
+                Jump(mark);
                 return;
             }
 
@@ -176,10 +219,6 @@ namespace RobotTask
         }
 
         public T GetElement(int index) => list[index];
-
-        public void SetElement(T value, int index)
-        {
-            list[index] = value;
-        }
+        public void SetElement(T value, int index) => list[index] = value;
     }
 }
