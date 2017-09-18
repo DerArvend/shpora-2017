@@ -2,6 +2,7 @@ using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
+using System.Runtime.CompilerServices;
 using System.Text.RegularExpressions;
 
 namespace RobotTask
@@ -9,15 +10,10 @@ namespace RobotTask
     public class Robot : IRobot
     {
         private readonly Dictionary<string, Action<string[]>> methods;
-
         private ListStack<string> stack;
         private Dictionary<string, int> labelsIndex;
-        private List<Command> parsedCommandsList;
 
         private int index;
-
-        private IEnumerator<string> inputEnumerator;
-        private List<String> outputList;
 
         private Func<string> readInput;
         private Action<string> writeOutput;
@@ -43,67 +39,48 @@ namespace RobotTask
 
         public List<string> Evaluate(List<string> commands, IEnumerable<string> input)
         {
-            InitializeFields(commands);
-            outputList = new List<string>();
-            inputEnumerator = input.GetEnumerator();
-            readInput = () =>
-            {
-                if (inputEnumerator.MoveNext())
-                    return inputEnumerator.Current;
-                return null;
-            };
+            var inputEnumerator = input.GetEnumerator();
+            var outputList = new List<string>();
+
+            readInput = inputEnumerator.GetNext;
             writeOutput = outputList.Add;
-            Run();
+
+            Run(commands);
             return outputList;
         }
 
         public void Evaluate(List<string> commands)
         {
-            InitializeFields(commands);
             readInput = Console.ReadLine;
             writeOutput = Console.WriteLine;
-            Run();
+            Run(commands);
         }
 
         private void InitializeFields(List<string> commands)
         {
             stack = new ListStack<string>();
-            parsedCommandsList = new List<Command>();
 
             labelsIndex = Enumerable
                 .Range(0, commands.Count)
                 .Where(i => commands[i].StartsWith("LABEL"))
                 .ToDictionary(i => commands[i].Split()[1], i => i);
-
-            ParseCommands(commands);
-        }
-
-        private void ParseCommands(List<string> commands)
-        {
-            foreach (var cmd in commands)
-            {
-                var splittedCommand = cmd.Split();
-                if (string.IsNullOrEmpty(cmd) || !methods.ContainsKey(splittedCommand[0]))
-                    parsedCommandsList.Add(null);
-
-                else
-                    parsedCommandsList.Add(new Command(
-                        methods[splittedCommand[0]],
-                        splittedCommand.Skip(1).ToArray())
-                    );
-            }
         }
 
         #endregion
 
-        private void Run()
+        private void Run(List<string> commands)
         {
-            for (index = 0; index < parsedCommandsList.Count; index++)
+            InitializeFields(commands);
+            for (index = 0; index < commands.Count; index++)
             {
-                if (parsedCommandsList[index] == null)
-                    continue;
+                if (String.IsNullOrEmpty(commands[index])) continue;
 
-                parsedCommandsList[index].Run();
+                var splittedCommdand = commands[index].Split();
+                var command = splittedCommdand[0];
+                var args = splittedCommdand.Skip(1).ToArray();
+
+                if (methods.ContainsKey(command))
+                    methods[command].Invoke(args);
             }
         }
 
@@ -160,6 +137,7 @@ namespace RobotTask
             var regex = new Regex(stringToReplace);
             if (regex.IsMatch(stringToChange))
                 stack.Push(regex.Replace(stringToChange, stringToInsert, 1));
+
             else
             {
                 stack.Push(stringToChange);
@@ -217,17 +195,14 @@ namespace RobotTask
         }
     }
 
-    public class Command
+    public static class EnumeratorExtensions
     {
-        private Action<string[]> method;
-        private string[] args;
-
-        public Command(Action<string[]> method, string[] args)
+        public static T GetNext<T>(this IEnumerator<T> enumerator)
         {
-            this.method = method;
-            this.args = args;
-        }
+            if (enumerator.MoveNext())
+                return enumerator.Current;
 
-        public void Run() => method.Invoke(args);
+            throw new IndexOutOfRangeException();
+        }
     }
 }
