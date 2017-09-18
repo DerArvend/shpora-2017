@@ -1,4 +1,5 @@
-﻿using System;
+using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text.RegularExpressions;
@@ -7,47 +8,52 @@ namespace RobotTask
 {
     public class Robot : IRobot
     {
-        private Dictionary<string, Action<string>> methods;
+        private readonly Dictionary<string, Action<string[]>> methods;
+
         private ListStack<string> stack;
-        private List<string> outputList;
         private Dictionary<string, int> labelsIndex;
+        private List<Command> parsedCommandsList;
 
         private int index;
+
+        private IEnumerator<string> inputEnumerator;
+        private List<String> outputList;
 
         private Func<string> readInput;
         private Action<string> writeOutput;
 
+        #region init
+
         public Robot()
         {
-            methods = new Dictionary<string, Action<string>>
+            methods = new Dictionary<string, Action<string[]>>
             {
                 {"PUSH", Push},
                 {"POP", Pop},
                 {"READ", Read},
                 {"WRITE", Write},
-                {"SWAR", Swap},
+                {"SWAP", Swap},
                 {"COPY", Copy},
                 {"JMP", Jmp},
                 {"CONCAT", Concat},
-                {"REPLACEONE", Replaceone},
+                {"REPLACEONE", ReplaceOne},
             };
         }
 
 
-        #region evaluate
-
         public List<string> Evaluate(List<string> commands, IEnumerable<string> input)
         {
             InitializeFields(commands);
-            var enumerator = input.GetEnumerator();
+            outputList = new List<string>();
+            inputEnumerator = input.GetEnumerator();
             readInput = () =>
             {
-                enumerator.MoveNext();
-                return enumerator.Current;
+                if (inputEnumerator.MoveNext())
+                    return inputEnumerator.Current;
+                return null;
             };
-            outputList = new List<string>();
             writeOutput = outputList.Add;
-            Run(commands);
+            Run();
             return outputList;
         }
 
@@ -56,115 +62,120 @@ namespace RobotTask
             InitializeFields(commands);
             readInput = Console.ReadLine;
             writeOutput = Console.WriteLine;
-            Run(commands);
+            Run();
         }
-
-        #endregion
 
         private void InitializeFields(List<string> commands)
         {
             stack = new ListStack<string>();
-            outputList = new List<string>();
-            labelsIndex = Enumerable.Range(0, commands.Count)
+            parsedCommandsList = new List<Command>();
+
+            labelsIndex = Enumerable
+                .Range(0, commands.Count)
                 .Where(i => commands[i].StartsWith("LABEL"))
                 .ToDictionary(i => commands[i].Split()[1], i => i);
+
+            ParseCommands(commands);
         }
 
-        private void Run(List<string> commands)
+        private void ParseCommands(List<string> commands)
         {
-            for (index = 0; index < commands.Count; index++)
+            foreach (var cmd in commands)
             {
-                if (String.IsNullOrEmpty(commands[index])) continue;
+                var splittedCommand = cmd.Split();
+                if (string.IsNullOrEmpty(cmd) || !methods.ContainsKey(splittedCommand[0]))
+                    parsedCommandsList.Add(null);
 
-                var splittedCommdand = commands[index].Split(new[] {' '}, 2);
-                var command = splittedCommdand[0];
-                var args = (splittedCommdand.Length > 1) ? splittedCommdand[1] : "";
-
-                if (methods.ContainsKey(command))
-                    methods[command](args);
+                else
+                    parsedCommandsList.Add(new Command(
+                        methods[splittedCommand[0]],
+                        splittedCommand.Skip(1).ToArray())
+                    );
             }
         }
 
-        private void Jmp(string args)
+        #endregion
+
+        private void Run()
         {
-            var mark = string.IsNullOrEmpty(args) ? stack.Pop() : args;
+            for (index = 0; index < parsedCommandsList.Count; index++)
+            {
+                if (parsedCommandsList[index] == null)
+                    continue;
+
+                parsedCommandsList[index].Run();
+            }
+        }
+
+
+        private void Push(string[] args)
+        {
+            var stringToPush = String.Join(" ", args);
+            stack.Push(stringToPush.Substring(1, stringToPush.Length - 2).Replace("''", "'"));
+        }
+
+        private void Pop(string[] args) => stack.Pop();
+        private void Read(string[] args) => stack.Push(readInput());
+        private void Write(string[] args) => writeOutput(stack.Peek());
+
+        private void Swap(string[] args)
+        {
+            var index1 = int.Parse(args[0]) - 1;
+            var index2 = int.Parse(args[1]) - 1;
+
+            var temp = stack[index1];
+            stack[index1] = stack[index2];
+            stack[index2] = temp;
+        }
+
+        private void Copy(string[] args)
+        {
+            var index = int.Parse(args[0]) - 1;
+            stack.Push(stack[index]);
+        }
+
+        private void Jmp(string[] args)
+        {
+            var mark = args.Length > 0 && !string.IsNullOrEmpty(args[0]) ? args[0] : stack.Pop();
+            Jmp(mark);
+        }
+
+        private void Jmp(string mark)
+        {
             index = labelsIndex[mark];
         }
 
-        private void Push(string args)
-        {
-            stack.Push(Regex.Replace(args, @"\'(.|$)", "$1"));
-        }
-
-        private void Pop(string args) => stack.Pop();
-        private void Read(string args) => stack.Push(readInput());
-        private void Write(string args) => writeOutput(stack.Peek());
-
-        private void Swap(string args)
-        {
-            var indexes = args
-                .Split()
-                .Select(x => stack.Count - int.Parse(x))
-                .ToArray();
-
-            var temp = stack.GetElement(indexes[0]);
-            stack.SetElement(stack.GetElement(indexes[1]), indexes[0]);
-            stack.SetElement(temp, indexes[1]);
-        }
-
-        private void Copy(string args)
-        {
-            stack.Push(
-                stack.GetElement(stack.Count - int.Parse(args))
-            );
-        }
-
-        private void Concat(string args)
+        private void Concat(string[] args)
         {
             stack.Push(stack.Pop() + stack.Pop());
         }
 
-        private void Replaceone(string args)
+        private void ReplaceOne(string[] args)
         {
             var stringToChange = stack.Pop();
-            var substringToRemove = stack.Pop();
-            var substringToInsert = stack.Pop();
+            var stringToReplace = stack.Pop();
+            var stringToInsert = stack.Pop();
             var mark = stack.Pop();
 
-            var i = stringToChange.IndexOf(substringToRemove);
-
-            if (i == -1)
+            var regex = new Regex(stringToReplace);
+            if (regex.IsMatch(stringToChange))
+                stack.Push(regex.Replace(stringToChange, stringToInsert, 1));
+            else
             {
                 stack.Push(stringToChange);
                 Jmp(mark);
-                return;
             }
-
-            stringToChange = stringToChange
-                .Remove(i, substringToRemove.Length)
-                .Insert(i, substringToInsert);
-            stack.Push(stringToChange);
         }
     }
 
-    public class ListStack<T>
+    public class ListStack<T> : IEnumerable<T>
     {
-        private List<T> list = new List<T>();
+        private List<T> list;
         public int Count => list.Count;
 
-        public void Push(T value)
+        public ListStack()
         {
-            list.Add(value);
-        }
-
-        public T Pop()
-        {
-            if (list.Count == 0)
-                throw new InvalidOperationException();
-
-            var result = list[list.Count - 1];
-            list.RemoveAt(list.Count - 1);
-            return result;
+            list = new List<T>();
         }
 
         public T Peek()
@@ -175,11 +186,48 @@ namespace RobotTask
             return list[list.Count - 1];
         }
 
-        public T GetElement(int index) => list[index];
-
-        public void SetElement(T value, int index)
+        public T Pop()
         {
-            list[index] = value;
+            var result = Peek();
+            list.RemoveAt(list.Count - 1);
+            return result;
         }
+
+        public void Push(T value) => list.Add(value);
+
+        public T this[int index]
+        {
+            get => list[list.Count - index - 1];
+            set => list[list.Count - index - 1] = value;
+        }
+
+        public IEnumerator<T> GetEnumerator()
+        {
+            var currentIndex = list.Count - 1;
+            while (currentIndex >= 0)
+            {
+                yield return list[currentIndex];
+                currentIndex--;
+            }
+        }
+
+        IEnumerator IEnumerable.GetEnumerator()
+        {
+            return GetEnumerator();
+        }
+    }
+
+    public class Command
+    {
+        private Action<string[]> method;
+        private string[] args;
+
+        public Command(Action<string[]> method, string[] args)
+        {
+            this.method = method;
+            this.args = args;
+        }
+
+        public void Run() => method.Invoke(args);
     }
 }
