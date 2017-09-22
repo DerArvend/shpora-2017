@@ -2,7 +2,6 @@ using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
-using System.Runtime.CompilerServices;
 using System.Text.RegularExpressions;
 
 namespace RobotTask
@@ -12,6 +11,7 @@ namespace RobotTask
         private readonly Dictionary<string, Action<string[]>> methods;
         private ListStack<string> stack;
         private Dictionary<string, int> labelsIndex;
+        private List<Command> parsedCommandsList;
 
         private int index;
 
@@ -59,11 +59,31 @@ namespace RobotTask
         private void InitializeFields(List<string> commands)
         {
             stack = new ListStack<string>();
-
             labelsIndex = Enumerable
                 .Range(0, commands.Count)
+                .Where(i => !string.IsNullOrEmpty(commands[i]))
                 .Where(i => commands[i].StartsWith("LABEL"))
                 .ToDictionary(i => commands[i].Split()[1], i => i);
+
+            ParseCommands(commands);
+        }
+
+        private void ParseCommands(List<string> commands)
+        {
+            parsedCommandsList = new List<Command>();
+            foreach (var cmd in commands)
+            {
+                var splittedCommand = cmd.Split();
+                if (string.IsNullOrEmpty(cmd) || !methods.ContainsKey(splittedCommand[0]))
+                    parsedCommandsList.Add(null);
+
+                else
+                {
+                    var action = methods[splittedCommand[0]];
+                    var args = splittedCommand.Skip(1).ToArray();
+                    parsedCommandsList.Add(new Command(action, args));
+                }
+            }
         }
 
         #endregion
@@ -71,16 +91,10 @@ namespace RobotTask
         private void Run(List<string> commands)
         {
             InitializeFields(commands);
-            for (index = 0; index < commands.Count; index++)
+            for (index = 0; index < parsedCommandsList.Count; index++)
             {
-                if (String.IsNullOrEmpty(commands[index])) continue;
-
-                var splittedCommdand = commands[index].Split();
-                var command = splittedCommdand[0];
-                var args = splittedCommdand.Skip(1).ToArray();
-
-                if (methods.ContainsKey(command))
-                    methods[command].Invoke(args);
+                if (parsedCommandsList[index] != null)
+                    parsedCommandsList[index].Execute();
             }
         }
 
@@ -130,13 +144,13 @@ namespace RobotTask
         private void ReplaceOne(string[] args)
         {
             var stringToChange = stack.Pop();
-            var stringToReplace = stack.Pop();
-            var stringToInsert = stack.Pop();
+            var substringToRemove = stack.Pop();
+            var substringToInsert = stack.Pop();
             var mark = stack.Pop();
 
-            var regex = new Regex(stringToReplace);
+            var regex = new Regex(substringToRemove);
             if (regex.IsMatch(stringToChange))
-                stack.Push(regex.Replace(stringToChange, stringToInsert, 1));
+                stack.Push(regex.Replace(stringToChange, substringToInsert, 1));
 
             else
             {
@@ -148,7 +162,7 @@ namespace RobotTask
 
     public class ListStack<T> : IEnumerable<T>
     {
-        private List<T> list;
+        private readonly List<T> list;
         public int Count => list.Count;
 
         public ListStack()
@@ -204,5 +218,19 @@ namespace RobotTask
 
             throw new IndexOutOfRangeException();
         }
+    }
+
+    public class Command
+    {
+        private readonly Action<string[]> action;
+        private readonly string[] args;
+
+        public Command(Action<string[]> action, string[] args)
+        {
+            this.action = action;
+            this.args = args;
+        }
+
+        public void Execute() => action.Invoke(args);
     }
 }
